@@ -221,8 +221,33 @@ def tensor_conv2d(
     s10, s11, s12, s13 = s1[0], s1[1], s1[2], s1[3]
     s20, s21, s22, s23 = s2[0], s2[1], s2[2], s2[3]
 
-    # TODO: Implement for Task 4.2.
-    raise NotImplementedError('Need to implement for Task 4.2')
+    for i in prange(out_size):
+        out_index = out_shape.copy()
+        to_index(i, out_shape, out_index)
+        my_batch, my_channel, my_height, my_width = out_index
+
+        result = 0
+        input_index = [my_batch, 0, 0, 0]
+        weight_index = [my_channel, 0, 0, 0]
+        for c in range(in_channels):
+            input_index[1] = weight_index[1] = c
+
+            for j_h in range(kh):
+                for j_w in range(kw):
+                    weight_index[2], weight_index[3] = j_h, j_w
+                    weight_pos = index_to_position(weight_index, weight_strides)
+                    w = weight[weight_pos]
+
+                    input_h = my_height + j_h if not reverse else (my_height - j_h)
+                    input_w = my_width + j_w if not reverse else (my_width - j_w)
+                    if input_h >= 0 and input_h < height and input_w >= 0 and input_w < width:
+                        input_index[2] = input_h
+                        input_index[3] = input_w
+                        input_pos = index_to_position(input_index, input_strides)
+                        result += input[input_pos] * w
+            
+        out_pos = index_to_position(out_index, out_strides)
+        out[out_pos] = result
 
 
 class Conv2dFun(Function):
