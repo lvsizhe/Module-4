@@ -74,8 +74,31 @@ def tensor_conv1d(
     s1 = input_strides
     s2 = weight_strides
 
-    # TODO: Implement for Task 4.1.
-    raise NotImplementedError('Need to implement for Task 4.1')
+    for i in prange(out_size):
+        out_index = out_shape.copy()
+        to_index(i, out_shape, out_index)
+        my_batch, my_channel, my_loc = out_index
+
+        result = 0
+        input_index = [my_batch, 0, 0]
+        weight_index = [my_channel, 0, 0]
+        for c in range(in_channels):
+            weight_index[1] = c
+            input_index[1] = c
+
+            for j in range(kw):
+                weight_index[2] = j
+                weight_pos = index_to_position(weight_index, weight_strides)
+                w = weight[weight_pos]
+
+                input_loc = (my_loc + j) if not reverse else (my_loc - j)
+                if input_loc >= 0 and input_loc < width:
+                    input_index[2] = input_loc
+                    input_pos = index_to_position(input_index, input_strides)
+                    result += input[input_pos] * w
+                
+        out_pos = index_to_position(out_index, out_strides)
+        out[out_pos] = result
 
 
 class Conv1dFun(Function):
