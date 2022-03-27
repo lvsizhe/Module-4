@@ -3,6 +3,8 @@ from .operators import prod
 from numpy import array, float64, ndarray
 import numba
 
+from functools import reduce
+
 MAX_DIMS = 32
 
 
@@ -23,8 +25,11 @@ def index_to_position(index, strides):
     Returns:
         int : position in storage
     """
+    pos = 0
+    for i in range(len(strides)):
+        pos += index[i] * strides[i]
 
-    raise NotImplementedError('Need to include this file from past assignment.')
+    return pos
 
 
 def to_index(ordinal, shape, out_index):
@@ -43,7 +48,11 @@ def to_index(ordinal, shape, out_index):
       None : Fills in `out_index`.
 
     """
-    raise NotImplementedError('Need to include this file from past assignment.')
+
+    remain = ordinal + 0
+    for i in range(len(shape)-1, -1, -1):
+        out_index[i] = remain % shape[i]
+        remain //= shape[i]
 
 
 def broadcast_index(big_index, big_shape, shape, out_index):
@@ -63,7 +72,12 @@ def broadcast_index(big_index, big_shape, shape, out_index):
     Returns:
         None : Fills in `out_index`.
     """
-    raise NotImplementedError('Need to include this file from past assignment.')
+
+    for i in range(len(shape)):
+        if shape[i] > 1:
+            out_index[i] = big_index[i + (len(big_shape) - len(shape))]
+        else:
+            out_index[i] = 0
 
 
 def shape_broadcast(shape1, shape2):
@@ -80,7 +94,28 @@ def shape_broadcast(shape1, shape2):
     Raises:
         IndexingError : if cannot broadcast
     """
-    raise NotImplementedError('Need to include this file from past assignment.')
+    if len(shape1) < len(shape2):
+        s1, s2 = shape1, shape2
+    else:
+        s1, s2 = shape2, shape1
+
+    s1 = [1] * (len(s2) - len(s1)) + list(s1)
+    s2 = list(s2)
+    assert(len(s1) == len(s2))
+
+    result = []
+    for i in range(len(s1)):
+        if s1[i] == s2[i]:
+            result.append(s1[i])
+            continue
+
+        if s1[i] == 1 or s2[i] == 1:
+            result.append(max(s1[i], s2[i]))
+            continue
+
+        raise IndexingError()
+
+    return tuple(result)
 
 
 def strides_from_shape(shape):
@@ -187,7 +222,10 @@ class TensorData:
             range(len(self.shape))
         ), f"Must give a position to each dimension. Shape: {self.shape} Order: {order}"
 
-        raise NotImplementedError('Need to include this file from past assignment.')
+        new_shape = tuple([self._shape[i] for i in order])
+        new_strides = tuple([self._strides[i] for i in order])
+
+        return TensorData(self._storage, new_shape, new_strides)
 
     def to_string(self):
         s = ""
@@ -200,7 +238,7 @@ class TensorData:
                     break
             s += l
             v = self.get(index)
-            s += f"{v:3.2f}"
+            s += f"{v:3.10f}"
             l = ""
             for i in range(len(index) - 1, -1, -1):
                 if index[i] == self.shape[i] - 1:

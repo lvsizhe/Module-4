@@ -2,6 +2,7 @@ import minitorch
 import datasets
 import numba
 import random
+import time
 
 FastTensorBackend = minitorch.make_tensor_backend(minitorch.FastOps)
 if numba.cuda.is_available():
@@ -27,7 +28,9 @@ class Network(minitorch.Module):
         self.layer3 = Linear(hidden, 1, backend)
 
     def forward(self, x):
-        raise NotImplementedError('Need to include this file from past assignment.')
+        h1 = self.layer1.forward(x).relu()
+        h2 = self.layer2.forward(h1).relu()
+        return self.layer3.forward(h2).sigmoid()
 
 
 class Linear(minitorch.Module):
@@ -40,7 +43,7 @@ class Linear(minitorch.Module):
         self.out_size = out_size
 
     def forward(self, x):
-        raise NotImplementedError('Need to include this file from past assignment.')
+        return x @ self.weights.value + self.bias.value
 
 
 class FastTrain:
@@ -62,6 +65,7 @@ class FastTrain:
         BATCH = 10
         losses = []
 
+        prev = time.time()
         for epoch in range(max_epochs):
             total_loss = 0.0
             c = list(zip(data.X, data.y))
@@ -93,6 +97,11 @@ class FastTrain:
                 y2 = minitorch.tensor(data.y)
                 correct = int(((out.get_data() > 0.5) == y2).sum()[0])
                 log_fn(epoch, total_loss, correct, losses)
+
+                now = time.time()
+                elapsed = now - prev
+                print("elapsed:", elapsed, "time per epoch:", elapsed / 10)
+                prev = now
 
 
 if __name__ == "__main__":

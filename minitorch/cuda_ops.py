@@ -17,8 +17,8 @@ to_index = cuda.jit(device=True)(to_index)
 index_to_position = cuda.jit(device=True)(index_to_position)
 broadcast_index = cuda.jit(device=True)(broadcast_index)
 
-THREADS_PER_BLOCK = 32
-
+BLOCK_DIM = 32
+THREADS_PER_BLOCK = BLOCK_DIM * BLOCK_DIM
 
 def tensor_map(fn):
     """
@@ -42,7 +42,21 @@ def tensor_map(fn):
     """
 
     def _map(out, out_shape, out_strides, out_size, in_storage, in_shape, in_strides):
-        raise NotImplementedError('Need to include this file from past assignment.')
+        idx = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+        if idx >= out_size:
+            return
+
+        out_index = cuda.local.array(MAX_DIMS, numba.int32)
+        in_index = cuda.local.array(MAX_DIMS, numba.int32)
+
+        to_index(idx, out_shape, out_index)
+        broadcast_index(out_index, out_shape, in_shape, in_index)
+
+        out_pos = index_to_position(out_index, out_strides)
+        in_pos = index_to_position(in_index, in_strides)
+
+        out[out_pos] = fn(in_storage[in_pos])
+
 
     return cuda.jit()(_map)
 
@@ -100,7 +114,23 @@ def tensor_zip(fn):
         b_shape,
         b_strides,
     ):
-        raise NotImplementedError('Need to include this file from past assignment.')
+        idx = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+        if idx >= out_size:
+            return
+
+        out_index = cuda.local.array(MAX_DIMS, numba.int32)
+        a_index = cuda.local.array(MAX_DIMS, numba.int32)
+        b_index = cuda.local.array(MAX_DIMS, numba.int32)
+
+        to_index(idx, out_shape, out_index)
+
+        broadcast_index(out_index, out_shape, a_shape, a_index)
+        broadcast_index(out_index, out_shape, b_shape, b_index)
+
+        a_pos = index_to_position(a_index, a_strides)
+        b_pos = index_to_position(b_index, b_strides)
+        out_pos = index_to_position(out_index, out_strides)
+        out[out_pos] = fn(a_storage[a_pos], b_storage[b_pos])
 
     return cuda.jit()(_zip)
 
@@ -142,8 +172,21 @@ def _sum_practice(out, a, size):
         size (int):  length of a.
 
     """
-    BLOCK_DIM = 32
-    raise NotImplementedError('Need to include this file from past assignment.')
+    shmem = cuda.shared.array(THREADS_PER_BLOCK, numba.float64)
+
+    idx = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+    if idx < size:
+        shmem[cuda.threadIdx.x] = a[idx]
+
+    if cuda.threadIdx.x > 0:
+        return
+
+    cuda.syncthreads()
+
+    t = 0.0
+    for i in range(size):
+        t += shmem[i]
+    out[cuda.blockIdx.x] = t
 
 
 jit_sum_practice = cuda.jit()(_sum_practice)
@@ -191,8 +234,28 @@ def tensor_reduce(fn):
         reduce_dim,
         reduce_value,
     ):
-        BLOCK_DIM = 1024
-        raise NotImplementedError('Need to include this file from past assignment.')
+        shmem = cuda.shared.array(THREADS_PER_BLOCK, numba.float64)
+        index = cuda.local.array(MAX_DIMS, numba.int32)
+
+        to_index(cuda.blockIdx.x, out_shape, index)
+        
+        group_idx = index[reduce_dim]
+        idx = group_idx * cuda.blockDim.x + cuda.threadIdx.x
+        if idx < a_shape[reduce_dim]:
+            index[reduce_dim] = idx
+            a_pos = index_to_position(index, a_strides)
+            shmem[cuda.threadIdx.x] = a_storage[a_pos]
+
+        if cuda.threadIdx.x > 0:
+            return
+
+        t = reduce_value
+        for i in range(a_shape[reduce_dim]):
+            t = fn(t, shmem[i])
+
+        index[reduce_dim] = group_idx
+        pos = index_to_position(index, out_strides)
+        out[pos] = t
 
     return cuda.jit()(_reduce)
 
@@ -224,10 +287,10 @@ def reduce(fn, start=0.0):
 
     def ret(a, dim):
         out_shape = list(a.shape)
-        out_shape[dim] = (a.shape[dim] - 1) // 1024 + 1
+        out_shape[dim] = (a.shape[dim] - 1) // THREADS_PER_BLOCK + 1
         out_a = a.zeros(tuple(out_shape))
 
-        threadsperblock = 1024
+        threadsperblock = THREADS_PER_BLOCK
         blockspergrid = out_a.size
         f[blockspergrid, threadsperblock](
             *out_a.tuple(), out_a.size, *a.tuple(), dim, start
@@ -267,8 +330,25 @@ def _mm_practice(out, a, b, size):
         size (int): size of the square
 
     """
-    BLOCK_DIM = 32
-    raise NotImplementedError('Need to include this file from past assignment.')
+    shm_a = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
+    shm_b = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
+
+    idx_x = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+    idx_y = cuda.blockIdx.y * cuda.blockDim.y + cuda.threadIdx.y
+    if idx_x >= size or idx_y >= size:
+        return
+    
+    pos = index_to_position((idx_x, idx_y), (size, 1))
+    shm_a[idx_x][idx_y] = a[pos]
+    shm_b[idx_x][idx_y] = b[pos]
+
+    cuda.syncthreads()
+
+    total = 0.0
+    for i in range(size):
+        total += shm_a[idx_x][i] * shm_b[i][idx_y]
+    
+    out[pos] = total
 
 
 jit_mm_practice = cuda.jit()(_mm_practice)
@@ -277,7 +357,7 @@ jit_mm_practice = cuda.jit()(_mm_practice)
 def mm_practice(a, b):
 
     (size, _) = a.shape
-    threadsperblock = (THREADS_PER_BLOCK, THREADS_PER_BLOCK)
+    threadsperblock = (BLOCK_DIM, BLOCK_DIM)
     blockspergrid = 1
     out = TensorData([0.0 for i in range(size * size)], (size, size))
     out.to_cuda_()
@@ -328,10 +408,47 @@ def tensor_matrix_multiply(
     Returns:
         None : Fills in `out`
     """
-    a_batch_stride = a_strides[0] if a_shape[0] > 1 else 0
-    b_batch_stride = b_strides[0] if b_shape[0] > 1 else 0
-    BLOCK_DIM = 32
-    raise NotImplementedError('Need to include this file from past assignment.')
+    idx_x = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+    idx_y = cuda.blockIdx.y * cuda.blockDim.y + cuda.threadIdx.y
+    idx_z = cuda.blockIdx.z * cuda.blockDim.z + cuda.threadIdx.z
+
+    shm_c = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
+    shm_c[cuda.threadIdx.x][cuda.threadIdx.y] = 0.0
+
+    shm_a = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
+    shm_b = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
+    count = (a_shape[-1] + BLOCK_DIM - 1) // BLOCK_DIM
+    for i in range(count):
+        # Block-(?, blockIdx.x, i) in a
+        x_a = cuda.blockIdx.x * BLOCK_DIM + cuda.threadIdx.x
+        y_a = i * BLOCK_DIM + cuda.threadIdx.y
+        z_a = (idx_z if out_shape[0] == a_shape[0] else 0)
+        if x_a < a_shape[1] and y_a < a_shape[2]:
+            pos_a = index_to_position((z_a, x_a, y_a), a_strides)
+            shm_a[cuda.threadIdx.x][cuda.threadIdx.y] = a_storage[pos_a]
+        else:
+            shm_a[cuda.threadIdx.x][cuda.threadIdx.y] = 0.0
+
+        # Block (?, i, blockIdx.y) in b
+        x_b = i * BLOCK_DIM + cuda.threadIdx.x
+        y_b = cuda.blockIdx.y * BLOCK_DIM + cuda.threadIdx.y
+        z_b = (idx_z if out_shape[0] == b_shape[0] else 0)
+        if x_b < b_shape[1] and y_b < b_shape[2]:
+            pos_b = index_to_position((z_b, x_b, y_b), b_strides)
+            shm_b[cuda.threadIdx.x][cuda.threadIdx.y] = b_storage[pos_b]
+        else:
+            shm_b[cuda.threadIdx.x][cuda.threadIdx.y] = 0.0
+
+        cuda.syncthreads()
+        for j in range(BLOCK_DIM):
+            shm_c[cuda.threadIdx.x][cuda.threadIdx.y] += shm_a[cuda.threadIdx.x][j] * shm_b[j][cuda.threadIdx.y]
+
+        cuda.syncthreads()
+    
+    if idx_z < out_shape[0] and idx_x < out_shape[1] and idx_y < out_shape[2]:
+        pos = index_to_position((idx_z, idx_x, idx_y), out_strides)
+        out[pos] = shm_c[cuda.threadIdx.x][cuda.threadIdx.y]
+        
 
 
 def matrix_multiply(a, b):
@@ -369,11 +486,11 @@ def matrix_multiply(a, b):
 
     # One block per batch, extra rows, extra col
     blockspergrid = (
-        (out.shape[1] + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK,
-        (out.shape[2] + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK,
+        (out.shape[1] + (BLOCK_DIM - 1)) // BLOCK_DIM,
+        (out.shape[2] + (BLOCK_DIM - 1)) // BLOCK_DIM,
         out.shape[0],
     )
-    threadsperblock = (THREADS_PER_BLOCK, THREADS_PER_BLOCK, 1)
+    threadsperblock = (BLOCK_DIM, BLOCK_DIM, 1)
 
     tensor_matrix_multiply[blockspergrid, threadsperblock](
         *out.tuple(), out.size, *a.tuple(), *b.tuple()
