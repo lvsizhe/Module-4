@@ -45,8 +45,6 @@ def avgpool2d(input, kernel):
     tiled, new_height, new_width = tile(input, kernel)
     pooled = tiled.mean(dim=4).view(batch, channel, new_height, new_width)
 
-    print("input:{},\ntiled:{},\npooled:{}".format(input, tiled, pooled))
-
     return pooled 
 
 
