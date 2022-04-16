@@ -6,6 +6,8 @@ from .autodiff import Variable
 from .tensor_data import TensorData
 from . import operators
 
+import numpy as np
+
 
 # This class is very similar to Scalar so we implemented it for you.
 
@@ -62,7 +64,7 @@ class Tensor(Variable):
 
     def _ensure_tensor(self, b):
         "Turns a python number into a tensor with the same backend."
-        if isinstance(b, (int, float)):
+        if isinstance(b, (int, float, np.int64)):
             b = Tensor.make([b], (1,), backend=self.backend)
         else:
             b._type_(self.backend)

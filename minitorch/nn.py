@@ -1,5 +1,5 @@
 from .fast_ops import FastOps
-from .tensor_functions import rand, Function
+from .tensor_functions import zeros, rand, Function
 from . import operators
 
 
@@ -19,8 +19,13 @@ def tile(input, kernel):
     kh, kw = kernel
     assert height % kh == 0
     assert width % kw == 0
-    # TODO: Implement for Task 4.3.
-    raise NotImplementedError('Need to implement for Task 4.3')
+
+    new_height = height // kh
+    new_width = width // kw
+    output = input.contiguous().view(batch, channel, new_height, kh, new_width, kw).permute(0, 1, 2, 4, 3, 5)
+    output = output.contiguous().view(batch, channel, new_height, new_width, kh * kw)
+
+    return (output, new_height, new_width)
 
 
 def avgpool2d(input, kernel):
@@ -35,8 +40,14 @@ def avgpool2d(input, kernel):
         :class:`Tensor` : pooled tensor
     """
     batch, channel, height, width = input.shape
-    # TODO: Implement for Task 4.3.
-    raise NotImplementedError('Need to implement for Task 4.3')
+    kh, kw = kernel
+
+    tiled, new_height, new_width = tile(input, kernel)
+    pooled = tiled.mean(dim=4).view(batch, channel, new_height, new_width)
+
+    print("input:{},\ntiled:{},\npooled:{}".format(input, tiled, pooled))
+
+    return pooled 
 
 
 max_reduce = FastOps.reduce(operators.max, -1e9)
