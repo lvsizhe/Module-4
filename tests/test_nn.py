@@ -3,6 +3,8 @@ from hypothesis import given
 from .strategies import tensors, assert_close
 import pytest
 
+import sys
+
 
 @pytest.mark.task4_3
 @given(tensors(shape=(1, 1, 4, 4)))
@@ -30,8 +32,16 @@ def test_avg(t):
 @pytest.mark.task4_4
 @given(tensors(shape=(2, 3, 4)))
 def test_max(t):
-    # TODO: Implement for Task 4.4.
-    raise NotImplementedError('Need to implement for Task 4.4')
+    out = minitorch.max(t, 1)
+    assert(out.shape == (2, 1, 4))
+
+    for i in range(t.shape[0]):
+        for j in range(t.shape[2]):
+            max_value = -sys.float_info.max
+            for k in range(t.shape[1]):
+                if t[(i, k, j)] > max_value:
+                    max_value = t[(i, k, j)]
+            assert_close(out[(i, 0, j)], max_value)
 
 
 @pytest.mark.task4_4
